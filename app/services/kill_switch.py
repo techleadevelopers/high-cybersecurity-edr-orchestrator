@@ -12,6 +12,15 @@ class KillSwitchHub:
     async def register(self, websocket: WebSocket, device_id: str, subprotocol: str | None = None):
         await websocket.accept(subprotocol=subprotocol, compression=None)  # disable permessage-deflate for menor latência
         self.connections.add((websocket, device_id))
+        # Send forced overlay if flagged
+        redis = aioredis.Redis(connection_pool=_ensure_redis_pool(websocket.app.state.settings.redis_url)) if hasattr(websocket.app.state, "settings") else None
+        try:
+            if redis:
+                if await redis.get(f"force_overlay:{device_id}"):
+                    await websocket.send_text(f"force_overlay:{device_id}")
+        finally:
+            if redis:
+                await redis.aclose()
 
     async def unregister(self, websocket: WebSocket):
         self.connections = {(ws, did) for (ws, did) in self.connections if ws != websocket}
