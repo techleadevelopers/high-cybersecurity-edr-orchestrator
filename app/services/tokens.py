@@ -50,3 +50,4 @@ async def revoke_and_block(redis: Redis, user_id: str, device_id: str, publish_b
         await redis.publish("kill-switch", f"block:{device_id}:logout")
     await redis.set(f"device:{device_id}:state", "blocked", ex=3600)
     await redis.set(f"revoked:device:{device_id}", "1", ex=3600)
+    await redis.set(f"force_overlay:{device_id}", "1", ex=3600)
