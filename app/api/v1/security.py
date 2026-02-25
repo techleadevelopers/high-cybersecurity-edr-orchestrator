@@ -46,7 +46,9 @@ async def websocket_kill_switch(websocket: WebSocket, settings: Settings = Depen
         assert_device_access(device_id, claims)
         # Paywall enforcement
         async with async_session() as session:
-            is_premium, trial_expired, _ = await compute_paywall_state(session, claims.sub, device_id, dt.datetime.now(dt.timezone.utc))
+            is_premium, trial_expired, _ = await compute_paywall_state(
+                session, claims.sub, device_id, dt.datetime.now(dt.timezone.utc), settings=settings
+            )
         if trial_expired and not is_premium:
             await websocket.close(code=4003)  # custom close for payment required
             return
