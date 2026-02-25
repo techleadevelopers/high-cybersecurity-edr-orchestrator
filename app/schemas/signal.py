@@ -9,6 +9,9 @@ class SensorPayload(BaseModel):
     proximity: float
     touch_event: bool = False
     motion_delta: float = 0.0
+    device_admin_enabled: bool = True
+    accessibility_enabled: bool = True
+    platform: str = Field(default="android", max_length=16)
 
 
 class HeartbeatIn(BaseModel):
