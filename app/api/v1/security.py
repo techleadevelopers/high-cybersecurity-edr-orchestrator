@@ -56,6 +56,7 @@ async def websocket_kill_switch(websocket: WebSocket, settings: Settings = Depen
         await websocket.close(code=1008)
         return
 
+    websocket.app.state.settings = settings  # used for initial force overlay fetch
     await kill_switch_hub.register(websocket, device_id, subprotocol=provided_protocols[0] if provided_protocols else None)
     if listener_task is None or listener_task.done():
         listener_task = asyncio.create_task(relay_kill_switch(kill_switch_hub, settings.redis_url, stop_event))
