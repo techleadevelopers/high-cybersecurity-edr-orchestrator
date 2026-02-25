@@ -43,10 +43,10 @@ Rate limit          rl:*
 - Global score:
 ```
 global_score =
-  0.4 * accelerometer_score +
-  0.3 * gyro_score +
-  0.15 * touch_entropy +
-  0.15 * network_spike
+ 0.4 * accelerometer_score +
+ 0.3 * gyro_score +
+ 0.15 * touch_entropy +
+ 0.15 * network_spike
 ```
 - Adaptive threshold por histórico de trust, attestation score e plano.
 - Circuit breaker evoluído: latência média Celery, runtime p95, throughput, métricas Prometheus; fallback para scoring simplificado + alerta/log de degradação.
