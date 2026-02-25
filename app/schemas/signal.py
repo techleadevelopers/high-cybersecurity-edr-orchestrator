@@ -7,6 +7,8 @@ class SensorPayload(BaseModel):
     gyroscope: list[float] = Field(..., min_items=3, max_items=3)
     overlay: float
     proximity: float
+    touch_event: bool = False
+    motion_delta: float = 0.0
 
 
 class HeartbeatIn(BaseModel):
