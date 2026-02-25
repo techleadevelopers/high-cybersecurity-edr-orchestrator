@@ -11,6 +11,7 @@ router = APIRouter()
 
 class RefreshIn(BaseModel):
     refresh_token: str
+    fingerprint: str
 
 
 class TokenPair(BaseModel):
@@ -25,7 +26,7 @@ class LogoutIn(BaseModel):
 
 @router.post("/refresh", response_model=TokenPair)
 async def refresh(payload: RefreshIn, settings: Settings = Depends(get_settings_dep), redis=Depends(get_redis)):
-    access, refresh_tok = await refresh_tokens(settings, redis, payload.refresh_token)
+    access, refresh_tok = await refresh_tokens(settings, redis, payload.refresh_token, payload.fingerprint)
     return TokenPair(access_token=access, refresh_token=refresh_tok)
 
 
