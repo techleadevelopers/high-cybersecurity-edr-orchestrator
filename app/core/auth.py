@@ -1,16 +1,24 @@
 from fastapi import Header, HTTPException, status, Depends
 from app.core.config import get_settings, Settings
 from app.core.security import verify_token, TokenClaims
+from app.core.deps import get_redis
 
 
-def get_current_claims(
+async def get_current_claims(
     authorization: str | None = Header(default=None, convert_underscores=False),
     settings: Settings = Depends(lambda: get_settings()),
+    redis=Depends(get_redis),
 ) -> TokenClaims:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1]
-    return verify_token(token, settings.jwt_secret_key, [settings.jwt_algorithm])
+    claims = verify_token(token, settings.jwt_secret_key, [settings.jwt_algorithm])
+    # Revocation check per device
+    if await redis.get(f"revoked:device:{claims.device_id}"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device revoked")
+    if claims.jti and await redis.get(f"revoked:jti:{claims.jti}"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token revoked")
+    return claims
 
 
 def decode_token_raw(token: str, settings: Settings) -> TokenClaims:
