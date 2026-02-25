@@ -22,7 +22,8 @@ def create_access_token(
     expires_minutes: int,
 ) -> str:
     expire = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=expires_minutes)
-    to_encode = {"sub": subject, "device_id": device_id, "exp": expire, "typ": "access"}
+    jti = str(uuid.uuid4())
+    to_encode = {"sub": subject, "device_id": device_id, "exp": expire, "typ": "access", "jti": jti}
     return jwt.encode(to_encode, secret_key, algorithm=algorithm)
 
 
