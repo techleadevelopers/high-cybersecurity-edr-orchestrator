@@ -149,11 +149,17 @@ async def billing_status(
     payload: BillingStatusIn,
     claims = Depends(get_current_claims),
     session: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings_dep),
 ):
     assert_device_access(payload.device_id, claims)
     now = dt.datetime.now(dt.timezone.utc)
     is_premium, trial_expired, created_at = await compute_paywall_state(
-        session, claims.sub, payload.device_id, now, attestation_payload=payload.attestation.dict() if payload.attestation else None
+        session,
+        claims.sub,
+        payload.device_id,
+        now,
+        attestation_payload=payload.attestation.dict() if payload.attestation else None,
+        settings=settings,
     )
     if trial_expired and not is_premium:
         raise HTTPException(status_code=402, detail="Payment required")
