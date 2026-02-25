@@ -12,13 +12,14 @@ async def ensure_device_registration(
     user_id: str,
     device_id: str,
     attestation_payload: dict | None = None,
+    settings=None,
 ) -> DeviceRegistration:
     stmt = select(DeviceRegistration).where(DeviceRegistration.user_id == user_id, DeviceRegistration.device_id == device_id)
     reg = (await session.execute(stmt)).scalar_one_or_none()
     if reg:
         # If attestation provided later, update once
         if attestation_payload and reg.verified_at is None:
-            att_data = build_attestation_record(attestation_payload, dt.datetime.now(dt.timezone.utc))
+            att_data = await build_attestation_record(attestation_payload, dt.datetime.now(dt.timezone.utc), settings)
             await session.execute(
                 update(DeviceRegistration)
                 .where(DeviceRegistration.id == reg.id)
@@ -31,7 +32,7 @@ async def ensure_device_registration(
         raise HTTPException(status_code=403, detail="Attestation required for new device")
     values = {"user_id": user_id, "device_id": device_id}
     if attestation_payload:
-        values.update(build_attestation_record(attestation_payload, dt.datetime.now(dt.timezone.utc)))
+        values.update(await build_attestation_record(attestation_payload, dt.datetime.now(dt.timezone.utc), settings))
     result = await session.execute(
         insert(DeviceRegistration)
         .values(**values)
@@ -58,8 +59,9 @@ async def compute_paywall_state(
     device_id: str,
     now: dt.datetime,
     attestation_payload: dict | None = None,
+    settings=None,
 ) -> tuple[bool, bool, dt.datetime]:
-    reg = await ensure_device_registration(session, user_id, device_id, attestation_payload=attestation_payload)
+    reg = await ensure_device_registration(session, user_id, device_id, attestation_payload=attestation_payload, settings=settings)
     sub_stmt = select(Subscription).where(Subscription.user_id == user_id, Subscription.device_id == device_id)
     sub = (await session.execute(sub_stmt)).scalar_one_or_none()
     is_premium = is_subscription_premium(sub, now)
