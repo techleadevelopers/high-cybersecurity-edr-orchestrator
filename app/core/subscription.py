@@ -40,7 +40,7 @@ class SubscriptionGuardMiddleware(BaseHTTPMiddleware):
 
         settings = get_settings()
         try:
-            claims: TokenClaims = verify_token(token, settings.jwt_secret_key, [settings.jwt_algorithm])
+            claims: TokenClaims = verify_token(token, settings, expected_typ="access")
         except Exception:
             return JSONResponse({"detail": "Invalid token"}, status_code=401)
         subject = claims.sub
