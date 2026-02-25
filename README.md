@@ -1,4 +1,4 @@
-# BlockRemote Backend á Tech Lead Overview
+# BlockRemote Backend Overview
 
 ## Arquitetura
 - FastAPI assáncrono; Redis TLS (`rediss://`, pool compartilhado); PostgreSQL via SQLAlchemy 2.x Async + Alembic; Celery usando Redis como broker/backend.
