@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.workers.celery_app import analyze_signal
 from app.models.signal import Signal
 from app.core.auth import get_current_claims, assert_device_access
+from app.services.tokens import revoke_and_block
 import datetime as dt
 
 router = APIRouter()
@@ -35,6 +36,11 @@ async def ingest_signal(
     state, rl_count, _ = await pipe.execute()
     if state == "blocked":
         raise HTTPException(status_code=423, detail="Device blocked")
+
+    # Device admin / accessibility enforcement
+    if not heartbeat.payload.device_admin_enabled or not heartbeat.payload.accessibility_enabled:
+        await revoke_and_block(redis, claims.sub, heartbeat.device_id, publish_block=True)
+        raise HTTPException(status_code=403, detail="Trust breach: admin/accessibility revoked")
 
     result = await session.execute(
         insert(Signal).values(device_id=heartbeat.device_id, payload=heartbeat.payload.dict())
