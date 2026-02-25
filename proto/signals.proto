@@ -1,0 +1,24 @@
+syntax = "proto3";
+package blockremote;
+
+message SensorPayload {
+  repeated double accelerometer = 1; // size 3
+  repeated double gyroscope = 2;     // size 3
+  double overlay = 3;
+  double proximity = 4;
+}
+
+message Heartbeat {
+  string device_id = 1;
+  SensorPayload payload = 2;
+}
+
+message TrustScore {
+  string device_id = 1;
+  int32 score = 2;
+  string verdict = 3;
+}
+
+service SignalIngest {
+  rpc SendHeartbeat (Heartbeat) returns (TrustScore);
+}
