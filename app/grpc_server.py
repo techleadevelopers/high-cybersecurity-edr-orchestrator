@@ -1,13 +1,14 @@
 import asyncio
 import datetime as dt
 import logging
+import json
 import grpc
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from redis import asyncio as aioredis
 
 from app.core.config import get_settings
 from app.core.deps import _ensure_redis_pool
-from app.services.trust import compute_trust_score
+from app.services.trust import compute_trust_score_stateful, MAX_HISTORY
 from app.schemas.signal import SensorPayload
 from app.services.access import compute_paywall_state
 from app.core.security import verify_token
@@ -34,7 +35,7 @@ class SignalIngestService(signals_pb2_grpc.SignalIngestServicer):
         if not auth or not auth.lower().startswith("bearer "):
             await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Missing bearer token")
         token = auth.split(" ", 1)[1]
-        claims = verify_token(token, self.settings.jwt_secret_key, [self.settings.jwt_algorithm])
+        claims = verify_token(token, self.settings, expected_typ="access")
         device_id = request.device_id
         assert_device_access(device_id, claims)
 
@@ -49,8 +50,13 @@ class SignalIngestService(signals_pb2_grpc.SignalIngestServicer):
         payload = SensorPayload(
             accelerometer=list(request.payload.accelerometer),
             gyroscope=list(request.payload.gyroscope),
-            overlay=request.payload.overlay,
-            proximity=request.payload.proximity,
+            overlay=getattr(request.payload, "overlay", 0.0),
+            proximity=getattr(request.payload, "proximity", 0.0),
+            touch_event=getattr(request.payload, "touch_event", False),
+            motion_delta=getattr(request.payload, "motion_delta", 0.0),
+            device_admin_enabled=getattr(request.payload, "device_admin_enabled", True),
+            accessibility_enabled=getattr(request.payload, "accessibility_enabled", True),
+            platform=getattr(request.payload, "platform", "android"),
         )
 
         state_key = f"device:{device_id}:state"
@@ -63,7 +69,15 @@ class SignalIngestService(signals_pb2_grpc.SignalIngestServicer):
         if state == "blocked":
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "Device blocked")
 
-        score = compute_trust_score(payload)
+        history_raw = await self.redis.lrange(f"sig:{device_id}", 0, MAX_HISTORY - 1)
+        history = []
+        for item in history_raw:
+            try:
+                history.append(SensorPayload(**json.loads(item)))
+            except Exception:
+                continue
+
+        score, _ = compute_trust_score_stateful(payload, history)
         verdict = "safe" if score >= 50 else "block"
         return signals_pb2.TrustScore(device_id=device_id, score=score, verdict=verdict)
 
