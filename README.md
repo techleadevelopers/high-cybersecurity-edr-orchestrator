@@ -1,67 +1,68 @@
-# BlockRemote Backend Overview
+# BlockRemote Backend Overview (Atualizado)
 
 ## Arquitetura
-- FastAPI ass√°ncrono; Redis TLS (`rediss://`, pool compartilhado); PostgreSQL via SQLAlchemy 2.x Async + Alembic; Celery usando Redis como broker/backend.
-- Middlewares: SecurityHeaders, SubscriptionGuard (auth + paywall de trial + rate limit por plano), CORS opcional.
-- Workers: `analyze_signal` (score + kill-switch) com an√°lise stateful e circuito b√°sico.
-- Proto gRPC: `backend/proto/signals.proto` define Heartbeat/TrustScore para ingest√°o bin√°ria futura.
+- FastAPI assÌncrono; Redis TLS (`rediss://`, pool compartilhado); PostgreSQL via SQLAlchemy 2.x Async + Alembic; Celery usando Redis como broker/backend.
+- Middlewares: SecurityHeaders; SubscriptionGuard (auth + paywall trial + rate limit por plano/adaptive); CORS opcional.
+- Workers: `analyze_signal` (score + kill-switch) com an·lise stateful, mÈtricas e circuito b·sico.
+- Proto gRPC: `backend/proto/signals.proto`; servidor gRPC (`app/grpc_server.py`) expıe `SendHeartbeat` (gerar stubs antes de rodar).
 
-## Autentica√ß√£o, Tokens e Paywall
-- JWT curto (15 min) cont√°m `sub` (user_id), `device_id` e `typ`.
-- Refresh rotativo: `/v1/auth/refresh` emite novo par (access + refresh) e armazena refresh em Redis `refresh:{user}:{device}:{jti}` (TTL 7 dias). Revoga√ß√£o deletando a chave; refresh inv√°lido retorna 403.
-- Depend√°ncias `get_current_claims` + `assert_device_access` garantem v√°nculo user+device em todas as rotas.
-- Paywall trial 7 dias: `DeviceRegistration` registra created_at + attestation. `compute_paywall_state` combina Subscription + registro; se trial expirou e n√°o premium ? 402.
+## AutenticaÁ„o, Tokens e Zero Trust
+- Access JWT curto (15 min) com `sub`, `device_id`, `typ`, `jti`.
+- Refresh rotativo: `/v1/auth/refresh`; armazenado em Redis `refresh:{user}:{device}:{jti}` (TTL 7d). `/v1/auth/logout` revoga refresh e opcionalmente publica bloqueio.
+- RevogaÁ„o imediata: flags Redis `revoked:device:{id}` ou `revoked:jti:{jti}` fazem `get_current_claims` retornar 403; SubscriptionGuard tambÈm bloqueia device revogado.
+- Paywall trial 7 dias: `DeviceRegistration` registra created_at + attestation. `compute_paywall_state` (billing/status) combina subscription+registro; trial expirado ? 402. Attestation È obrigatÛria em novo device.
 
 ## Attestation de Hardware
 - `DeviceRegistration` guarda `attestation_type`, `nonce`, `attested_public_key_hash`, `verified_at`, `risk_reason`.
-- `/v1/billing/status` (POST) recebe `device_id` + payload de attestation; novo device sem attestation ? 403. Valida√ß√£o stub em `services/attestation.py` (substituir por App Attest / Play Integrity) e persist√°ncia no registro.
+- `/v1/billing/status` (POST) recebe `device_id` + attestation; sem attestation ? 403. `services/attestation.py` integra Play Integrity (API key) e App Attest (validator URL); fallback dev legacy.
 
 ## Billing
-- Webhook HMAC `/v1/billing/webhook` com segredo obrigat√°rio; idempot√°ncia por `BillingEvent.event_id`.
-- `/v1/billing/subscription` usa cache Redis (15 min) ou DB; sempre escopado a user+device.
-- `/v1/billing/status` retorna premium/trial, datas e aplica 402 se trial expirou; atualiza attestation quando enviada.
+- Webhook HMAC `/v1/billing/webhook` (BILLING_WEBHOOK_SECRET); idempotÍncia por `BillingEvent.event_id`.
+- `/v1/billing/subscription` usa cache Redis (15 min) ou DB; escopado a user+device.
+- `/v1/billing/status` retorna premium/trial, atualiza attestation; 402 se trial expirado.
 
-## Sinais e Prote√ß√£o
-- `/v1/signals/heartbeat` usa pipeline Redis: GET state + INCR/EXPIRE rate key numa viagem; se bloqueado ? 423. Persiste Signal e mant√°m √°ltimas 10 leituras em `sig:{device}`.
-- `/v1/security/trust-score` vincula device ao token.
-- Kill-Switch WebSocket exige token via `Sec-WebSocket-Protocol` ou `?token=` + device_id; fecha 1008 (inv√°lido) ou 4003 (paywall). Eventos s√°o direcionados ao device alvo.
+## Sinais e ProteÁ„o
+- `/v1/signals/heartbeat`: pipeline Redis (GET state + INCR/EXPIRE rate) numa viagem; se blocked ? 423. Valida admin/accessibility; se revogados ? revoke+block (403). Persiste Signal e ˙ltimas 10 leituras em `sig:{device}`.
+- `/v1/security/trust-score`: retorna score de Redis, vinculado ao token/device.
+- Kill-Switch WebSocket: token via `Sec-WebSocket-Protocol` ou `?token=`; `accept(compression=None)`; fecha 1008 inv·lido ou 4003 paywall. Envia `force_overlay` imediato se flag set.
+- Kill-Switch Priority WS: `/v1/security/priority` para Android; ao receber `SYNTHETIC_TOUCH_ALARM` publica `CRITICAL_LOCK:{device}`.
 
-## Engine de Score (stateful)
-- Worker l√° √°ltimas 10 leituras (`sig:{device}`) e aplica penalidade se varia√ß√£o de movimento for quase nula (suspeita de automa√ß√£o).
-- Circuit breaker: se fila Celery/Redis > 1000, mant√°m decis√°o anterior (n√°o recalcula) e grava `decision:{device}` (TTL 5 min).
-- Score < 40 ? grava AuditLog e publica `block:{device}:score:{score}`.
+## Engine de Score (stateful + Zero Trust)
+- `SensorPayload` inclui `touch_event`, `motion_delta`, `device_admin_enabled`, `accessibility_enabled`, `platform`.
+- SUSPECT_RAT: touch_event true + motion_delta < 0.05 penaliza score.
+- HistÛrico: usa ˙ltimas 10 leituras para penalizar variaÁ„o quase nula (automaÁ„o).
+- Circuit breaker: se fila Celery > 1000, reutiliza decis„o anterior; mÈtricas de latÍncia em Redis (`metrics:celery:enqueue_ms`, `metrics:celery:runtime_ms`).
+- Score < 50 ? AuditLog, revoke+block device, set `force_overlay`, publish kill-switch.
+
+## EDR / Threat Intel
+- Endpoint `/v1/edr/report` recebe apps suspeitos, permissıes perigosas e DNS logs; cruza com blacklist de hashes/DNS/IP RAT.
+- Threat scoring: sideloaded + SMS + Accessibility ? risco alto; contato com RAT ? risco crÌtico. Risco crÌtico dispara `IMMEDIATE_QUARANTINE`, revoga tokens e forÁa overlay.
 
 ## Auditoria
-- `/v1/audit/logs` exige device_id, filtra por user+device, limite 200; √°ndice `(user_id, device_id, created_at)`.
+- `/v1/audit/logs` (200 itens) filtra por user+device; Ìndice `(user_id, device_id, created_at)`.
 - AuditLog inclui user_id, device_id, threat_level, reason, signal_id, created_at (UTC).
 
 ## Redis
-- Pool com timeouts curtos; TLS obrigat√°rio fora de dev; usado em deps, guard, heartbeat, kill-switch, refresh tokens, Celery, listas de sinais.
+- Pool com timeouts curtos; TLS obrigatÛrio fora de dev; usado em deps, guard, heartbeat, kill-switch (normal e priority), refresh, Celery, listas de sinais, mÈtricas, flags de revogaÁ„o/overlay.
 
-## Config/Seguran√°a
-- BaseSettings obrigat√°rios: DATABASE_URL, REDIS_URL, JWT_SECRET_KEY, BILLING_WEBHOOK_SECRET; DEBUG default False.
-- `.env*` ignorado (limpeza hist√°rica ainda pendente).
-- Cabe√°alhos: X-Content-Type-Options, X-Frame-Options DENY, X-XSS-Protection, HSTS 2 anos.
+## Config/SeguranÁa
+- Vari·veis obrigatÛrias: DATABASE_URL, REDIS_URL, JWT_SECRET_KEY, BILLING_WEBHOOK_SECRET; DEBUG default False.
+- Attestation: PLAY_INTEGRITY_API_KEY, APP_ATTEST_VALIDATOR_URL. gRPC: GRPC_PORT (default 50051).
+- `.env*` ignorado (limpeza histÛrica pendente). CabeÁalhos: X-Content-Type-Options, X-Frame-Options DENY, X-XSS-Protection, HSTS 2 anos.
 
 ## Modelos
-- Signal(id, device_id, payload, created_at)
-- AuditLog(id, user_id, device_id, threat_level, reason, signal_id, created_at) + √°ndice composto
-- Subscription(id, user_id, device_id, plan_code, status, plan_tier, expires_at, auto_renew, created_at, updated_at)
-- BillingEvent(id, provider, event_id, payload, created_at)
-- DeviceRegistration(id, user_id, device_id, created_at, attestation_type, attestation_nonce, attested_public_key_hash, verified_at, risk_reason) + √°ndice √°nico
-- Plan cat√°logo
+- Signal, AuditLog, Subscription, BillingEvent, DeviceRegistration (com attestation), Plan.
 
 ## Rate limiting
-- trial 120/min; paid_basic 600/min; paid 1200/min. Chave `rl:{plan_tier}:{user}:{device}`.
+- trial 120/min; paid_basic 600/min; paid 1200/min; android_accessibility 1800/min (headers `X-Platform: android`, `X-Accessibility-Telemetry: true`). Chave `rl:{plan_tier}:{user}:{device}`.
 
-## Opera√ß√£o e Observabilidade
-- Rodar Alembic para novas colunas/√°ndices (DeviceRegistration, AuditLog etc.).
-- Redis na mesma AZ/regi√°o, TLS + AUTH; considerar `notify-keyspace-events` para revoga√ß√£o de refresh.
-- Recomendado logging estruturado (user_id, device_id, jti, decis√°o, lat√°ncias) e OpenTelemetry nas rotas cr√°ticas e workers.
+## OperaÁ„o e Observabilidade
+- Alembic apÛs mudanÁas de schema (attestation, novos campos de payload, Ìndices).
+- Redis na mesma AZ/regi„o, TLS + AUTH; considere `notify-keyspace-events` para revogaÁ„o.
+- Logging estruturado (user_id, device_id, jti, decis„o, latÍncias) e OpenTelemetry em rotas crÌticas/worker.
+- gRPC stubs: `python -m grpc_tools.protoc -I backend/proto --python_out=backend/app/grpc --grpc_python_out=backend/app/grpc backend/proto/signals.proto`.
 
-## Backlog / Pr√°ximos passos
-- Integrar attestation real (App Attest / Play Integrity) no `services/attestation.py`.
-- Expor ingest√°o gRPC baseada em `proto/signals.proto` ou gateway HTTP?gRPC.
-- Adicionar endpoint de logout para revogar refresh por device e, se preciso, publicar bloqueio.
-- Opcional: desabilitar permessage-deflate no WebSocket se lat√°ncia for cr√°tica.
-- Refinar circuit breaker (lat√°ncia m√°dia e tempo em fila) com m√°tricas/alertas do Celery.
+## Backlog
+- Ligar feeds reais de Threat Intel (hash/IP/domain) e gest„o de blacklist.
+- mTLS para gRPC e kill-switch priority em produÁ„o.
+- Alerts usando mÈtricas `metrics:celery:*` e eventos `CRITICAL_LOCK`/`IMMEDIATE_QUARANTINE`.
