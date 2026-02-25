@@ -6,6 +6,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.api.v1.router import api_router
+from app.api.internal.router import internal_router
 from app.core.config import get_settings, Settings
 from app.core.subscription import SubscriptionGuardMiddleware
 
@@ -40,6 +41,7 @@ def get_application() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(SubscriptionGuardMiddleware)
     app.include_router(api_router)
+    app.include_router(internal_router)
     return app
 
 
