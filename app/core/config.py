@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     cors_origins: List[AnyHttpUrl] = Field(default_factory=list, env="CORS_ORIGINS")
 
     billing_webhook_secret: str = Field(..., env="BILLING_WEBHOOK_SECRET")
+    play_integrity_api_key: Optional[str] = Field(default=None, env="PLAY_INTEGRITY_API_KEY")
+    app_attest_validator_url: Optional[str] = Field(default=None, env="APP_ATTEST_VALIDATOR_URL")
+    grpc_port: int = Field(default=50051, env="GRPC_PORT")
 
     class Config:
         case_sensitive = True
