@@ -54,6 +54,7 @@ async def ingest_signal(
         payload=heartbeat.payload.dict(),
         device_id=heartbeat.device_id,
         user_id=claims.sub,
+        enqueued_at=dt.datetime.now(dt.timezone.utc).isoformat(),
     )
 
     trust_hint = max(0, 100 - int(heartbeat.payload.overlay * 100))
