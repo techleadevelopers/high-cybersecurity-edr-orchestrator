@@ -10,6 +10,7 @@ from app.schemas.signal import SensorPayload
 from app.models.signal import Signal, AuditLog
 from sqlalchemy import insert
 from app.core.deps import _ensure_redis_pool
+from app.services.tokens import revoke_and_block
 import json
 import statistics
 
@@ -65,24 +66,32 @@ def analyze_signal(signal_id: int, payload: dict, device_id: str, user_id: str, 
                 if stddev < 0.05:  # very flat signals -> possível automação
                     variation_penalty = 15
 
-            score = max(0, base_score - variation_penalty)
+            suspect_penalty = 0
+            reason = None
+            if payload_obj.touch_event and payload_obj.motion_delta < 0.05:
+                suspect_penalty = 30
+                reason = "SUSPECT_RAT"
+
+            score = max(0, min(100, base_score - variation_penalty - suspect_penalty))
             decision_key = f"decision:{device_id}"
             await redis.set(decision_key, score, ex=300)
 
             # Metrics: store last 50 samples of enqueue latency and runtime
             start_proc = dt.datetime.now(dt.timezone.utc)
 
-            if score < 40:
+            if score < 50:
                 await session.execute(
                     insert(AuditLog).values(
                         user_id=user_id,
                         device_id=device_id,
                         threat_level="high" if score < 20 else "medium",
-                        reason="Static device with active overlay",
+                        reason=reason or "Trust score below threshold",
                         signal_id=signal_id,
                     )
                 )
                 await session.commit()
+                await revoke_and_block(redis, user_id, device_id, publish_block=True)
+                await redis.set(f"revoked:device:{device_id}", "1", ex=3600)
                 await redis.publish("kill-switch", f"block:{device_id}:score:{score}")
             runtime_ms = int((dt.datetime.now(dt.timezone.utc) - start_proc).total_seconds() * 1000)
             metrics_pipe = redis.pipeline()
