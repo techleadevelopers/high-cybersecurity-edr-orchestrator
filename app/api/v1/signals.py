@@ -52,7 +52,7 @@ async def ingest_signal(
     sig_key = f"sig:{heartbeat.device_id}"
     pipe2 = redis.pipeline(transaction=False)
     pipe2.lpush(sig_key, heartbeat.payload.json())
-    pipe2.ltrim(sig_key, 0, 9)  # keep last 10
+    pipe2.ltrim(sig_key, 0, 99)  # keep last 100 for stateful analysis
     await pipe2.execute()
 
     background_tasks.add_task(
