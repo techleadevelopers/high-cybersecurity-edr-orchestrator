@@ -10,7 +10,7 @@ class KillSwitchHub:
         self.connections: Set[Tuple[WebSocket, str]] = set()
 
     async def register(self, websocket: WebSocket, device_id: str, subprotocol: str | None = None):
-        await websocket.accept(subprotocol=subprotocol)
+        await websocket.accept(subprotocol=subprotocol, compression=None)  # disable permessage-deflate for menor latência
         self.connections.add((websocket, device_id))
 
     async def unregister(self, websocket: WebSocket):
