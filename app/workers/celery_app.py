@@ -1,5 +1,5 @@
-import os
 import asyncio
+import datetime as dt
 from celery import Celery
 from redis import asyncio as aioredis
 from redis.asyncio import ConnectionPool
@@ -28,12 +28,20 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 @celery.task(name="analyze_signal")
-def analyze_signal(signal_id: int, payload: dict, device_id: str, user_id: str):
+def analyze_signal(signal_id: int, payload: dict, device_id: str, user_id: str, enqueued_at: str | None = None):
     async def _run():
         async with SessionLocal() as session:
             redis = aioredis.Redis(connection_pool=_ensure_redis_pool(settings.redis_url))
 
             queue_depth = await redis.llen("celery")
+            enqueue_latency_ms = None
+            if enqueued_at:
+                try:
+                    enq_dt = dt.datetime.fromisoformat(enqueued_at)
+                    enqueue_latency_ms = int((dt.datetime.now(dt.timezone.utc) - enq_dt).total_seconds() * 1000)
+                except Exception:
+                    enqueue_latency_ms = None
+
             if queue_depth and queue_depth > 1000:
                 # Circuit breaker: keep last decision
                 await redis.aclose()
@@ -61,6 +69,9 @@ def analyze_signal(signal_id: int, payload: dict, device_id: str, user_id: str):
             decision_key = f"decision:{device_id}"
             await redis.set(decision_key, score, ex=300)
 
+            # Metrics: store last 50 samples of enqueue latency and runtime
+            start_proc = dt.datetime.now(dt.timezone.utc)
+
             if score < 40:
                 await session.execute(
                     insert(AuditLog).values(
@@ -73,5 +84,13 @@ def analyze_signal(signal_id: int, payload: dict, device_id: str, user_id: str):
                 )
                 await session.commit()
                 await redis.publish("kill-switch", f"block:{device_id}:score:{score}")
+            runtime_ms = int((dt.datetime.now(dt.timezone.utc) - start_proc).total_seconds() * 1000)
+            metrics_pipe = redis.pipeline()
+            if enqueue_latency_ms is not None:
+                metrics_pipe.lpush("metrics:celery:enqueue_ms", enqueue_latency_ms)
+                metrics_pipe.ltrim("metrics:celery:enqueue_ms", 0, 49)
+            metrics_pipe.lpush("metrics:celery:runtime_ms", runtime_ms)
+            metrics_pipe.ltrim("metrics:celery:runtime_ms", 0, 49)
+            await metrics_pipe.execute()
             await redis.aclose()
     asyncio.run(_run())
