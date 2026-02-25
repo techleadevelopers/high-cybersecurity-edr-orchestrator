@@ -49,6 +49,10 @@ class SubscriptionGuardMiddleware(BaseHTTPMiddleware):
         if claims.device_id != device_id:
             await redis.close()
             return JSONResponse({"detail": "Token not authorized for this device"}, status_code=403)
+        # Revoked/blocked device short-circuit
+        if await redis.get(f"revoked:device:{device_id}") or await redis.get(f"device:{device_id}:state") == "blocked":
+            await redis.close()
+            return JSONResponse({"detail": "Device revoked"}, status_code=403)
 
         cache_key = f"sub:{subject}:{device_id}"
         data = await redis.hgetall(cache_key)
