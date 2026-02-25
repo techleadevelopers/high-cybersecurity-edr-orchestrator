@@ -42,3 +42,10 @@ async def revoke_device_tokens(redis: Redis, user_id: str, device_id: str):
             await redis.delete(*keys)
         if cursor == 0:
             break
+
+
+async def revoke_and_block(redis: Redis, user_id: str, device_id: str, publish_block: bool = False):
+    await revoke_device_tokens(redis, user_id, device_id)
+    if publish_block:
+        await redis.publish("kill-switch", f"block:{device_id}:logout")
+    await redis.set(f"device:{device_id}:state", "blocked", ex=900)
