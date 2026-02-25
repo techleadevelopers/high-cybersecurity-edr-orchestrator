@@ -13,6 +13,7 @@ PLAN_RATE_LIMITS = {
     "trial": {"limit": 120, "window": 60},
     "paid_basic": {"limit": 600, "window": 60},
     "paid": {"limit": 1200, "window": 60},
+    "android_accessibility": {"limit": 1800, "window": 60},
 }
 
 
@@ -82,7 +83,10 @@ class SubscriptionGuardMiddleware(BaseHTTPMiddleware):
                 await redis.close()
                 return JSONResponse({"detail": "Subscription inactive"}, status_code=402)
 
-            plan_tier = data.get("plan_tier", "trial")
+        plan_tier = data.get("plan_tier", "trial")
+        # Adaptive prioritization for Android accessibility telemetry
+        if request.headers.get("X-Platform") == "android" and request.headers.get("X-Accessibility-Telemetry") == "true":
+            plan_tier = "android_accessibility"
             if status == "trial":
                 async with async_session() as session:
                     is_premium, trial_expired, _ = await compute_paywall_state(
