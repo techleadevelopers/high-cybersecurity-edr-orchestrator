@@ -56,7 +56,7 @@ class SubscriptionGuardMiddleware(BaseHTTPMiddleware):
         if not data:
             async with async_session() as session:
                 is_premium, trial_expired, _ = await compute_paywall_state(
-                    session, subject, device_id, dt.datetime.now(dt.timezone.utc)
+                    session, subject, device_id, dt.datetime.now(dt.timezone.utc), settings=settings
                 )
             if trial_expired and not is_premium:
                 await redis.close()
@@ -82,7 +82,7 @@ class SubscriptionGuardMiddleware(BaseHTTPMiddleware):
             if status == "trial":
                 async with async_session() as session:
                     is_premium, trial_expired, _ = await compute_paywall_state(
-                        session, subject, device_id, dt.datetime.now(dt.timezone.utc)
+                        session, subject, device_id, dt.datetime.now(dt.timezone.utc), settings=settings
                     )
                 if trial_expired and not is_premium:
                     await redis.close()
