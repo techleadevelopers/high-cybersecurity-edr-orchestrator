@@ -1,4 +1,90 @@
-﻿# 🛡 BlockRemote Backend — Enterprise Architecture Overview (vNext)
+﻿# 🛡 BlockRemote — Real-Time Anti-Fraud Remote Access Defense
+
+**Enterprise-grade zero-trust backend for mobile behavioral threat detection.**
+
+Ciberdefesa mobile com verificação de sensores, kill-switch em tempo real e billing freemium/pago.
+
+## Arquitetura
+- **API**: FastAPI 3.12 async, JWT + middleware de assinatura, CORS/headers seguros.
+- **DB**: PostgreSQL + SQLAlchemy + Alembic (migrations 0001-0003 já criadas).
+- **Cache/RT**: Redis (state, rate limit, pub/sub kill-switch).
+- **Workers**: Celery com Redis broker para análise de sinais e publicação do kill-switch.
+- **Realtime**: WebSocket `/v1/security/kill-switch` via Redis pub/sub.
+- **Billing**: Webhook HMAC, planos seeded (trial, paid_basic), middleware de entitlement + rate limit por plano, endpoint `/v1/billing/subscription`.
+- **Infra**: Docker Compose (dev), Terraform para Azure (Container Apps, Postgres Flexible, Redis Cache, Key Vault), GitHub Actions (build/push GHCR + Terraform plan/apply).
+
+## Endpoints-chave
+- `POST /v1/signals/heartbeat` (JWT + X-Device-Id): ingestão rápida, fila Celery.
+- `GET /v1/security/trust-score` (JWT): score 0-100.
+- `WS /v1/security/kill-switch` (JWT): bloqueio imediato.
+- `GET /v1/audit/logs` (JWT): histórico de bloqueios.
+- `POST /v1/billing/webhook` (HMAC X-Signature): atualiza assinatura e cache.
+- `GET /v1/billing/subscription` (JWT + device_id): status/plan.
+
+## Rate limit por plano
+- trial: 120 req/min; paid_basic: 600 req/min; paid: 1200 req/min (Redis token bucket em `SubscriptionGuardMiddleware`).
+
+## Banco & Migrações
+```
+docker compose exec api alembic upgrade head
+```
+Migrações: 0001 (schema base), 0002 (subscription/billing events), 0003 (seed planos trial/paid_basic).
+
+## Execução local (dev)
+```
+cp backend/.env.example backend/.env
+# ajuste secrets e URLs
+DOCKER_HOST=... # opcional se usar engine remoto
+API_IMAGE=ghcr.io/<org>/blockremote-api:latest WORKER_IMAGE=ghcr.io/<org>/blockremote-worker:latest docker compose up --build
+```
+
+## CI/CD
+- `.github/workflows/ci-cd.yml`: build/push imagens para GHCR (usa `GHCR_TOKEN`), opcional deploy remoto via `DOCKER_HOST`.
+- `.github/workflows/infra.yml`: Terraform plan em PR; apply manual (`workflow_dispatch` input apply=true). Requer secrets `ARM_CLIENT_ID/SECRET`, `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`.
+
+## Terraform (Azure)
+Estrutura em `infra/terraform` com módulos:
+- `network` (VNet + subnets app/data),
+- `postgres` (Flexible Server, private),
+- `redis` (Azure Cache Premium TLS),
+- `keyvault` (segredos),
+- `container_apps` (API/worker com secrets e ingress 8000).
+Exemplo apply:
+```
+terraform -chdir=infra/terraform init
+terraform -chdir=infra/terraform apply \
+  -var project=blockremote -var environment=prod -var resource_group_name=rg-blockremote-prod \
+  -var location=brazilsouth \
+  -var api_image=ghcr.io/<org>/blockremote-api:latest \
+  -var worker_image=ghcr.io/<org>/blockremote-worker:latest \
+  -var jwt_secret=... -var billing_webhook_secret=... -var postgres_admin_password=...
+```
+
+## Autenticação
+- JWT bearer obrigatório em rotas protegidas; `sub` = user_id. Header `X-Device-Id` requerido para entitlement/rate limit.
+- Webhook billing: assine corpo com HMAC SHA-256 usando `BILLING_WEBHOOK_SECRET` em `X-Signature`.
+
+## Kill Switch
+- Workers publicam em canal Redis `kill-switch`; hub WebSocket retransmite para apps máveis.
+
+## Observabilidade (sugestão)
+- Ativar Azure Monitor/Log Analytics (já previsto no módulo), exportar métricas Celery/Redis.
+
+## Estrutura de pastas
+```
+backend/app/api/v1      # endpoints
+backend/app/core        # config, auth, middleware
+backend/app/models      # SQLAlchemy models
+backend/app/schemas     # Pydantic
+backend/app/services    # trust-score, kill-switch
+backend/app/workers     # Celery
+backend/alembic         # migrations
+infra/terraform         # IaC Azure
+```
+
+
+
+# 🛡 BlockRemote Backend — Enterprise Architecture Overview (vNext)
 
 ## Arquitetura Geral (Zero-Trust Native)
 - FastAPI async (strict validation + structured logging).
